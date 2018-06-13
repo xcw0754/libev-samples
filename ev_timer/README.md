@@ -12,7 +12,45 @@ ev_timer_start (loop, timer);
 ev_timer_stop (loop, timer);
 ev_timer_set (timer, 60., 0.);
 ev_timer_start (loop, timer);
+ev_timer_remaining (loop, ev_timer *)
 ```
+
+符号定义:
+```
+typedef double ev_tstamp;
+
+#if EV_MINPRI == EV_MAXPRI
+# define EV_DECL_PRIORITY
+#elif !defined (EV_DECL_PRIORITY)
+# define EV_DECL_PRIORITY int priority;
+#endif
+
+#ifndef EV_COMMON
+# define EV_COMMON void *data;
+#endif
+
+#ifndef EV_CB_DECLARE
+# define EV_CB_DECLARE(type) void (*cb)(EV_P_ struct type *w, int revents);
+#endif
+
+#define EV_WATCHER(type)			    \
+    int active;     /* private */		\
+    int pending;    /* private */		\
+    EV_DECL_PRIORITY /* private */	    \
+    EV_COMMON       /* rw */			\
+    EV_CB_DECLARE (type) /* private */
+
+#define EV_WATCHER_TIME(type)			\
+    EV_WATCHER (type)				    \
+    ev_tstamp at;     /* private */
+
+typedef struct ev_timer
+{
+    EV_WATCHER_TIME (ev_timer)
+    ev_tstamp repeat; /* rw */
+} ev_timer;
+```
+
 
 
 # sample1
@@ -138,4 +176,75 @@ int main()
 }
 ```
 
+# sample5
 
+sample4看起来有点麻烦，而且还耗时，每次都要将结构体移除再插入，不妨用以下的方式代替。
+
+
+```
+#include <ev.h>
+#include <stdio.h>
+
+ev_timer timeout_watcher;
+
+void timeout_cb (struct ev_loop *loop, ev_timer *w, int revents)
+{
+    puts("timeout_cb has been called");   
+
+    w->repeat = 7.;     // 这里可以改变下次回调超时
+    ev_timer_again(loop, w);
+}
+
+int main()
+{
+    struct ev_loop *loop = EV_DEFAULT;
+
+    ev_init(&timeout_watcher, timeout_cb);
+    timeout_watcher.repeat = 2.;
+    ev_timer_again(loop, &timeout_watcher);
+
+    ev_run (loop, 0);
+    return 0;
+}
+```
+
+# sample6
+
+其实sample5所用的`ev_timer_again`是每次都会回调的，比如下面这样写就是每间隔2秒就回调一次。
+
+```
+#include <ev.h>
+#include <stdio.h>
+
+ev_timer timeout_watcher;
+
+void timeout_cb (struct ev_loop *loop, ev_timer *w, int revents)
+{
+    puts("timeout_cb has been called");   
+}
+
+int main()
+{
+    struct ev_loop *loop = EV_DEFAULT;
+
+    ev_init(&timeout_watcher, timeout_cb);
+    timeout_watcher.repeat = 2.;
+    ev_timer_again(loop, &timeout_watcher);
+
+    ev_run (loop, 0);
+    return 0;
+}
+```
+
+# 时间过早的问题
+
+官方文档提到了一个例子，比如一个OS是以秒计时的，即对外提供的最小单位就是秒，然后在第500.9秒的时候我们设置了一个1秒的timeout，那么应该在什么时候触发这个回调比较好呢？
+
+如果在第501秒触发，那么实际上只过去了0.1秒而已，如果在502秒触发，那么实际上是过去了1.1秒。libev就是后者这样的，它只能保证至少已经过去了所设的timeout秒，但是不能保证刚好就是timeout秒。比如进程接收到STOP信号，那么无法避免，它只能在恢复运行的时候触发回调，可能已经晚了很多，但这是没法保证的。
+
+
+# 关于时间更新
+
+获取系统时间是个耗时的系统调用，libev是自己维护了个时间，只有在`ev_run`收集到新事件的前后才会更新，这样会导致的问题就是时间偏差会越来越大。`ev_now()`用于获得libev的当前时间，`ev_time()`用于获取系统的当前时间。
+
+如果想矫正libev的当前时间，可以通过`ev_timer_set (&timer, after + (ev_time () - ev_now ()), 0.);`这样来矫正它。也可以通过`ev_now_update ()`来强迫矫正`ev_now`。
